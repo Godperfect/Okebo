@@ -20,6 +20,72 @@ admin.initializeApp({
 app.use(express.json());
 app.use(express.static(__dirname, { index: false }));
 
+// Create devtools detection script
+const devtoolsDetectionScript = `
+<script>
+  // Function to detect DevTools
+  (function detectDevTools() {
+    function redirectToDeadPage() {
+      window.location.href = '/dead.html';
+    }
+
+    // Method 1: Check window dimensions
+    function checkDimensions() {
+      const threshold = 160;
+      if (window.outerWidth - window.innerWidth > threshold || 
+          window.outerHeight - window.innerHeight > threshold) {
+        redirectToDeadPage();
+      }
+    }
+
+    // Method 2: Debug trick to detect console
+    const element = new Image();
+    Object.defineProperty(element, 'id', {
+      get: function() {
+        redirectToDeadPage();
+      }
+    });
+
+    // Method 3: Debugger detection
+    function isDebuggerEnabled() {
+      const startTime = new Date();
+      debugger;
+      const endTime = new Date();
+      return endTime - startTime > 100;
+    }
+
+    // Set up continuous monitoring
+    window.addEventListener('resize', checkDimensions);
+    setInterval(checkDimensions, 1000);
+
+    // Check developer tools status on page load
+    checkDimensions();
+
+    // Periodically check for console tricks
+    setInterval(function() {
+      console.log('%c', element);
+      console.clear();
+      if (isDebuggerEnabled()) {
+        redirectToDeadPage();
+      }
+    }, 1000);
+  })();
+</script>`;
+
+// Middleware to inject devtools detection script
+const injectDevtoolsDetection = (req, res, next) => {
+  const originalSend = res.send;
+  res.send = function(body) {
+    if (typeof body === 'string' && body.includes('</head>')) {
+      body = body.replace('</head>', `${devtoolsDetectionScript}</head>`);
+    }
+    originalSend.call(this, body);
+  };
+  next();
+};
+
+app.use(injectDevtoolsDetection);
+
 // Session configuration (in-memory)
 const sessionSecret = crypto.randomBytes(64).toString('hex');
 
@@ -76,6 +142,11 @@ app.get('/logout', (req, res) => {
   req.session.destroy(() => {
     res.redirect('/login');
   });
+});
+
+// DevTools redirect page
+app.get('/dead.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dead.html'));
 });
 
 // API routes (require authentication)
