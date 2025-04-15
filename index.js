@@ -2,74 +2,46 @@ const express = require('express');
 const admin = require('firebase-admin');
 const path = require('path');
 const session = require('express-session');
-const fs = require('fs');
 const crypto = require('crypto');
+const fs = require('fs');
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 
-// Load credentials from password.json
+// Load credentials
 const credentials = JSON.parse(fs.readFileSync('./password.json', 'utf8'));
-
 const serviceAccount = require('./serviceAccountKey.json');
 
+// Initialize Firebase Admin
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
 
+// Middleware
 app.use(express.json());
-app.use(express.static(__dirname, {
-  index: false // Prevent automatically serving index.html
-}));
+app.use(express.static(__dirname, { index: false }));
 
-// Session secret management
-const sessionSecretFile = './session-secret.json';
-let sessionSecret;
+// Session configuration (in-memory)
+const sessionSecret = crypto.randomBytes(64).toString('hex');
 
-// Try to load existing secret from file or generate a new one
-try {
-  if (fs.existsSync(sessionSecretFile)) {
-    const secretData = JSON.parse(fs.readFileSync(sessionSecretFile, 'utf8'));
-    sessionSecret = secretData.secret;
-    console.log('Using existing session secret');
-  } else {
-    // Generate a new strong secret
-    sessionSecret = crypto.randomBytes(64).toString('hex');
-
-    // Save the secret to file
-    fs.writeFileSync(sessionSecretFile, JSON.stringify({ 
-      secret: sessionSecret,
-      generated: new Date().toISOString()
-    }));
-    console.log('Generated new session secret');
-  }
-} catch (err) {
-  console.error('Error managing session secret:', err);
-  // Fall back to a random secret for this session only
-  sessionSecret = crypto.randomBytes(64).toString('hex');
-  console.warn('Using temporary session secret - all sessions will be invalidated on restart');
-}
-
-// Configure session middleware with our secret
 app.use(session({
   secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
-  cookie: { 
-    secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
-    maxAge: 3600000 // Session expires after 1 hour
+  cookie: {
+    secure: false, // Render uses HTTP during development preview
+    maxAge: 3600000
   }
 }));
 
 // Authentication middleware
 const ensureAuthenticated = (req, res, next) => {
   if (req.session.authenticated) {
-    next();
-  } else {
-    res.redirect('/login');
+    return next();
   }
+  res.redirect('/login');
 };
 
-// Root route redirects to login
+// Routes
 app.get('/', (req, res) => {
   if (req.session.authenticated) {
     res.redirect('/admin');
@@ -78,7 +50,6 @@ app.get('/', (req, res) => {
   }
 });
 
-// Login page route
 app.get('/login', (req, res) => {
   if (req.session.authenticated) {
     res.redirect('/admin');
@@ -87,10 +58,8 @@ app.get('/login', (req, res) => {
   }
 });
 
-// Login authentication route
 app.post('/auth', (req, res) => {
   const { username, password } = req.body;
-
   if (credentials.Username === username && credentials.Password === password) {
     req.session.authenticated = true;
     res.json({ success: true });
@@ -99,19 +68,17 @@ app.post('/auth', (req, res) => {
   }
 });
 
-// Admin dashboard route (protected)
 app.get('/admin', ensureAuthenticated, (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Logout route
 app.get('/logout', (req, res) => {
-  req.session.destroy();
-  res.redirect('/login');
+  req.session.destroy(() => {
+    res.redirect('/login');
+  });
 });
 
-// All API routes are protected by authentication middleware
-// Get all Firebase Auth users
+// API routes (require authentication)
 app.get('/users', ensureAuthenticated, async (req, res) => {
   try {
     let users = [];
@@ -134,7 +101,6 @@ app.get('/users', ensureAuthenticated, async (req, res) => {
   }
 });
 
-// Create a new user
 app.post('/create-user', ensureAuthenticated, async (req, res) => {
   const { email, phoneNumber, displayName, password } = req.body;
   try {
@@ -150,7 +116,6 @@ app.post('/create-user', ensureAuthenticated, async (req, res) => {
   }
 });
 
-// Toggle user disabled/enabled
 app.post('/user-status', ensureAuthenticated, async (req, res) => {
   const { uid, disabled } = req.body;
   try {
@@ -161,7 +126,6 @@ app.post('/user-status', ensureAuthenticated, async (req, res) => {
   }
 });
 
-// Send password reset email
 app.post('/reset-password', ensureAuthenticated, async (req, res) => {
   const { email } = req.body;
   try {
@@ -172,7 +136,6 @@ app.post('/reset-password', ensureAuthenticated, async (req, res) => {
   }
 });
 
-// Delete a user
 app.post('/delete-user', ensureAuthenticated, async (req, res) => {
   const { uid } = req.body;
   try {
@@ -183,6 +146,7 @@ app.post('/delete-user', ensureAuthenticated, async (req, res) => {
   }
 });
 
+// Start server
 app.listen(port, () => {
-  console.log(`Admin panel is live at http://localhost:${port}`);
+  console.log(`Admin panel running at http://localhost:${port}`);
 });
